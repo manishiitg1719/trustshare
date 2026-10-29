@@ -1,0 +1,359 @@
+// SHARED CONTRACT. Do not change without telling all three builders.
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  USER
+  OWNER
+  MANAGER
+  ADMIN
+}
+
+enum UserType {
+  STUDENT
+  STAFF
+  EXTERNAL
+}
+
+enum ResourceType {
+  SPACE
+  EQUIPMENT
+  DEVICE
+  TOOL
+}
+
+enum RiskLevel {
+  LOW
+  MEDIUM
+  HIGH
+}
+
+enum ResourceStatus {
+  ACTIVE
+  OUT_OF_SERVICE
+  ARCHIVED
+}
+
+enum CredentialStatus {
+  PENDING
+  VERIFIED
+  REJECTED
+}
+
+enum BookingStatus {
+  REQUESTED
+  APPROVED
+  WAITLISTED
+  REJECTED
+  CANCELLED
+  CHECKED_IN
+  RETURNED
+  CLOSED
+  DISPUTED
+  OVERDUE
+  NO_SHOW
+}
+
+enum RequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum ConditionPhase {
+  CHECK_IN
+  RETURN
+}
+
+enum IncidentType {
+  DAMAGE
+  DELAY
+  NO_SHOW
+  MISUSE
+  SAFETY
+  OTHER
+}
+
+enum Severity {
+  LOW
+  MEDIUM
+  HIGH
+}
+
+enum IncidentStatus {
+  OPEN
+  RESOLVED
+  DISMISSED
+}
+
+enum PenaltyKind {
+  WARNING
+  SUSPENSION
+  QUOTA_REDUCTION
+}
+
+enum PenaltyStatus {
+  PROPOSED
+  CONFIRMED
+  DISMISSED
+  APPEALED
+  OVERTURNED
+}
+
+model User {
+  id          String   @id @default(cuid())
+  name        String
+  email       String   @unique
+  role        Role     @default(USER)
+  userType    UserType @default(STUDENT)
+  verified    Boolean  @default(false) // verified by an admin
+  persona     String? // short demo description shown in the role switcher
+  createdAt   DateTime @default(now())
+
+  credentials       UserCredential[] @relation("CredentialHolder")
+  verifiedCreds     UserCredential[] @relation("CredentialVerifier")
+  ownedResources    Resource[]       @relation("ResourceOwner")
+  managedResources  Resource[]       @relation("ResourceManager")
+  bookings          Booking[]        @relation("BookingUser")
+  decidedBookings   Booking[]        @relation("BookingDecider")
+  supervisedBookings Booking[]       @relation("BookingSupervisor")
+  conditionReports  ConditionReport[]
+  incidentsReported Incident[]       @relation("IncidentReporter")
+  incidentsResolved Incident[]       @relation("IncidentResolver")
+  penalties         Penalty[]        @relation("PenaltyUser")
+  penaltiesDecided  Penalty[]        @relation("PenaltyDecider")
+  notifications     Notification[]
+  auditEntries      AuditLog[]
+  extensionsDecided ExtensionRequest[]
+}
+
+model Credential {
+  id          String  @id @default(cuid())
+  name        String  @unique // e.g. "Laser cutter induction"
+  description String
+  validMonths Int     @default(12)
+  nextSession String? // shown as a fix-it hint, e.g. "Induction every Tuesday 3pm, Room B12"
+
+  holders   UserCredential[]
+  resources ResourceCredential[]
+}
+
+model UserCredential {
+  id           String           @id @default(cuid())
+  userId       String
+  credentialId String
+  status       CredentialStatus @default(PENDING)
+  evidence     String? // data URL or link to certificate
+  issuedAt     DateTime?
+  expiresAt    DateTime?
+  verifiedById String?
+  reviewNote   String?
+  createdAt    DateTime         @default(now())
+
+  user       User       @relation("CredentialHolder", fields: [userId], references: [id], onDelete: Cascade)
+  credential Credential @relation(fields: [credentialId], references: [id], onDelete: Cascade)
+  verifiedBy User?      @relation("CredentialVerifier", fields: [verifiedById], references: [id])
+
+  @@index([userId])
+}
+
+model Resource {
+  id                 String         @id @default(cuid())
+  name               String
+  type               ResourceType
+  description        String
+  location           String
+  photoUrl           String?
+  ownerId            String
+  managerId          String?
+  riskLevel          RiskLevel      @default(LOW)
+  requiresSupervisor Boolean        @default(false)
+  externalAllowed    Boolean        @default(true)
+  usageRules         String         @default("")
+  maxHoursPerBooking Int            @default(4)
+  monthlyHourQuota   Int            @default(20) // per user, per calendar month
+  cooldownDays       Int            @default(0) // min days between bookings of this resource by the same user
+  openHour           Int            @default(9) // 0-23
+  closeHour          Int            @default(18) // 1-24
+  openDays           Int[]          @default([1, 2, 3, 4, 5]) // 0 = Sunday
+  checklist          String[]       @default([]) // condition items checked at check-in and return
+  status             ResourceStatus @default(ACTIVE)
+  createdAt          DateTime       @default(now())
+
+  owner        User                 @relation("ResourceOwner", fields: [ownerId], references: [id])
+  manager      User?                @relation("ResourceManager", fields: [managerId], references: [id])
+  requirements ResourceCredential[]
+  bookings     Booking[]
+  incidents    Incident[]
+}
+
+model ResourceCredential {
+  resourceId   String
+  credentialId String
+
+  resource   Resource   @relation(fields: [resourceId], references: [id], onDelete: Cascade)
+  credential Credential @relation(fields: [credentialId], references: [id], onDelete: Cascade)
+
+  @@id([resourceId, credentialId])
+}
+
+model Booking {
+  id             String        @id @default(cuid())
+  resourceId     String
+  userId         String
+  start          DateTime
+  end            DateTime
+  purpose        String
+  status         BookingStatus @default(REQUESTED)
+  ruleResults    Json          @default("[]") // RuleResult[] from the booking engine (see src/lib/shared/types.ts)
+  decisionReason String?
+  decidedById    String?
+  decidedAt      DateTime?
+  autoApproved   Boolean       @default(false)
+  priorityScore  Float         @default(0)
+  supervisorId   String?
+  checkInCode    String        @unique @default(cuid())
+  checkedInAt    DateTime?
+  returnedAt     DateTime?
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  resource         Resource           @relation(fields: [resourceId], references: [id])
+  user             User               @relation("BookingUser", fields: [userId], references: [id])
+  decidedBy        User?              @relation("BookingDecider", fields: [decidedById], references: [id])
+  supervisor       User?              @relation("BookingSupervisor", fields: [supervisorId], references: [id])
+  conditionReports ConditionReport[]
+  incidents        Incident[]
+  extensions       ExtensionRequest[]
+  auditEntries     AuditLog[]
+
+  @@index([resourceId, start])
+  @@index([userId])
+}
+
+model ExtensionRequest {
+  id          String        @id @default(cuid())
+  bookingId   String
+  newEnd      DateTime
+  reason      String
+  status      RequestStatus @default(PENDING)
+  decidedById String?
+  decisionNote String?
+  createdAt   DateTime      @default(now())
+
+  booking   Booking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  decidedBy User?   @relation(fields: [decidedById], references: [id])
+}
+
+model ConditionReport {
+  id          String         @id @default(cuid())
+  bookingId   String
+  phase       ConditionPhase
+  items       Json // ChecklistEntry[]: { item: string, ok: boolean, note?: string }
+  notes       String         @default("")
+  photos      String[]       @default([]) // data URLs (resized client-side) or https links
+  createdById String
+  createdAt   DateTime       @default(now())
+
+  booking   Booking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  createdBy User    @relation(fields: [createdById], references: [id])
+
+  @@unique([bookingId, phase])
+}
+
+model Incident {
+  id             String         @id @default(cuid())
+  bookingId      String?
+  resourceId     String
+  reporterId     String
+  type           IncidentType
+  severity       Severity       @default(MEDIUM)
+  description    String
+  photos         String[]       @default([])
+  status         IncidentStatus @default(OPEN)
+  aiSummary      String? // always labelled "AI suggestion, human decision required"
+  resolutionNote String?
+  resolvedById   String?
+  createdAt      DateTime       @default(now())
+
+  booking    Booking?  @relation(fields: [bookingId], references: [id])
+  resource   Resource  @relation(fields: [resourceId], references: [id])
+  reporter   User      @relation("IncidentReporter", fields: [reporterId], references: [id])
+  resolvedBy User?     @relation("IncidentResolver", fields: [resolvedById], references: [id])
+  penalties  Penalty[]
+}
+
+model Penalty {
+  id          String        @id @default(cuid())
+  userId      String
+  incidentId  String?
+  kind        PenaltyKind
+  days        Int           @default(0) // suspension length, or quota reduction in hours for QUOTA_REDUCTION
+  reason      String
+  status      PenaltyStatus @default(PROPOSED)
+  appealText  String?
+  decidedById String?
+  decisionNote String?
+  startsAt    DateTime?
+  endsAt      DateTime?
+  createdAt   DateTime      @default(now())
+
+  user      User      @relation("PenaltyUser", fields: [userId], references: [id])
+  incident  Incident? @relation(fields: [incidentId], references: [id])
+  decidedBy User?     @relation("PenaltyDecider", fields: [decidedById], references: [id])
+}
+
+model Notification {
+  id        String    @id @default(cuid())
+  userId    String
+  kind      String // see NotificationKind in src/lib/shared/types.ts
+  title     String
+  body      String
+  link      String?
+  readAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, readAt])
+}
+
+model EmailLog {
+  id        String   @id @default(cuid())
+  to        String
+  subject   String
+  body      String
+  createdAt DateTime @default(now())
+}
+
+// Append-only: UPDATE and DELETE are blocked by a trigger (scripts/constraints.sql).
+model AuditLog {
+  id         String   @id @default(cuid())
+  actorId    String? // null = system (auto-approval, scheduler)
+  action     String // see AuditAction in src/lib/shared/types.ts
+  entityType String // "Booking" | "Resource" | "UserCredential" | "Incident" | "Penalty" | "User" | "ExtensionRequest" | "System"
+  entityId   String
+  bookingId  String?
+  resourceId String?
+  reason     String?
+  meta       Json     @default("{}")
+  createdAt  DateTime @default(now())
+
+  actor   User?    @relation(fields: [actorId], references: [id])
+  booking Booking? @relation(fields: [bookingId], references: [id])
+
+  @@index([bookingId])
+  @@index([entityType, entityId])
+}
+
+// Single row (id = 1). Lets the demo jump forward in time. Always read time via now() in src/lib/shared/clock.ts.
+model DemoClock {
+  id            Int @id @default(1)
+  offsetMinutes Int @default(0)
+}

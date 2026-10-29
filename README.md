@@ -1,36 +1,28 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# TrustShare starter kit
 
-## Getting Started
+A trusted sharing platform for one college engineering department: verified owners list labs and equipment, eligible users book them, and every decision is explained and recorded.
 
-First, run the development server:
+Stack: Next.js 15 (App Router, server actions) · TypeScript · Tailwind CSS 4 · Prisma 6 · PostgreSQL.
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
-```
+## Setup (10 minutes)
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+1. Get a Postgres database. Either a free Supabase or Neon project (copy the connection string), or local Docker:
+   `docker run -d --name ts-db -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=trustshare -p 5432:5432 postgres:16`
+2. `cp .env.example .env` and set `DATABASE_URL`.
+3. `npm install`
+4. `npm run db:setup` creates the tables, adds the overlap constraint and append-only audit trigger, and loads demo data.
+5. `npm run dev` and open http://localhost:3000. Pick a persona on the Start page.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+Use the **Reset demo data** button on `/start` (or `npm run db:seed`) whenever you want the seeded states back.
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+Each builder uses their **own** database while building, so nobody breaks anyone else's data.
 
-## Learn More
+## Rules for the three builders
 
-To learn more about Next.js, take a look at the following resources:
-
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+- Read your handout in `docs/handouts/`. Then read `OWNERS.md`.
+- Work on your own git branch: `part-a`, `part-b` or `part-c`.
+- Edit only the files you own. Do not edit `prisma/schema.prisma` or anything in `src/lib/shared/`. If you think a shared file must change, tell Mamba first.
+- Always use `now()` from `src/lib/shared/clock.ts` instead of `new Date()` for business logic.
+- Every booking status change goes through `transitionBooking()`. Every other important action calls `logAudit()`. Every message to a user goes through `notify()`.
+- Run `npm run typecheck` and `npm run lint` before you hand over.
+- Commit often with clear messages. Judges may ask for development history.
